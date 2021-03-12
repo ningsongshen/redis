@@ -127,6 +127,7 @@ int _dictInit(dict *d, dictType *type,
     d->privdata = privDataPtr;
     d->rehashidx = -1;
     d->pauserehash = 0;
+    d->globalDepth = 2; /* number of buckets we need to hash to */
     return DICT_OK;
 }
 
