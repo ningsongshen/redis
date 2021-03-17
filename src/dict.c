@@ -250,6 +250,25 @@ int dictRehash(dict *d, int n) {
     /* Check if we already rehashed the whole table... */
     if (d->ht[0].used == 0) {
         zfree(d->ht[0].table);
+
+        /* for all the new directory entries, point them to the existing buckets as in extendible hashing */
+        dictEntry *de, *nextde;
+        de = d->ht[1].table[0];
+        uint64_t h = 0;
+        uint64_t double_h = h + (d->ht[1].size / 2);
+        while(de) {
+            nextde = de->next;
+            de->next = d->ht[1].table[h];
+            d->ht[1].table[double_h] = de;
+            d->ht[0].used--;
+            d->ht[1].used++;
+            de = nextde;
+            h += 1;
+            double_h += 1;
+        }
+
+        d->ht[0].table[d->rehashidx] = NULL;
+        d->rehashidx++;
         d->ht[0] = d->ht[1];
         _dictReset(&d->ht[1]);
         d->rehashidx = -1;
