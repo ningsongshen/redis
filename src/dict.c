@@ -163,6 +163,7 @@ int _dictExpand(dict *d, unsigned long size, int* malloc_failed)
 
     /* Allocate the new hash table and initialize all pointers to NULL */
     n.size = realsize;
+    printf("new size %lu\n", realsize);
     n.sizemask = realsize-1;
     if (malloc_failed) {
         n.table = ztrycalloc(realsize*sizeof(dictEntry*));
@@ -212,7 +213,15 @@ int dictRehash(dict *d, int n) {
     int empty_visits = n*10; /* Max number of empty buckets to visit. */
     if (!dictIsRehashing(d)) return 0;
 
-    while(n-- && d->ht[0].used != 0) {
+    /* Copy the existing array over to the new one twice, so  new pointers point to the original elements */
+
+    // printf("arraysize %lu %lu \n", d->ht[0].size * sizeof(d->ht[0].table[0]), d->ht[1].size * sizeof(d->ht[1].table[0]));
+    //unsigned long ht_zero_bytes = d->ht[0].size * sizeof(d->ht[0].table[0]);
+    //memcpy(&(d->ht[1].table), &(d->ht[0].table), ht_zero_bytes);
+    //memcpy(&(d->ht[1].table) + ht_zero_bytes, &(d->ht[0].table), ht_zero_bytes);
+
+    /* Split the collission array */
+    while(n > (-1 * n) && d->ht[0].used != 0) {
         dictEntry *de, *nextde;
 
         /* Note that rehashidx can't overflow as we are sure there are more
@@ -223,18 +232,16 @@ int dictRehash(dict *d, int n) {
             if (--empty_visits == 0) return 1;
         }
         de = d->ht[0].table[d->rehashidx];
+        uint64_t h = d->rehashidx;
         /* Move all the keys in this bucket from the old to the new hash HT */
         while(de) {
-            uint64_t h;
-
             nextde = de->next;
-            /* Get the index in the new hash table */
-            h = dictHashKey(d, de->key) & d->ht[1].sizemask;
             de->next = d->ht[1].table[h];
             d->ht[1].table[h] = de;
             d->ht[0].used--;
             d->ht[1].used++;
             de = nextde;
+            h += 1;
         }
         d->ht[0].table[d->rehashidx] = NULL;
         d->rehashidx++;
@@ -328,6 +335,8 @@ dictEntry *dictAddRaw(dict *d, void *key, dictEntry **existing)
      * the element already exists. */
     if ((index = _dictKeyIndex(d, key, dictHashKey(d,key), existing)) == -1)
         return NULL;
+
+    printf("add index %lu\n", index);
 
     /* Allocate the memory and store the new entry.
      * Insert the element in top, with the assumption that in a database

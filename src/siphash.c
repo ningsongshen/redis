@@ -44,6 +44,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <ctype.h>
+#include <inttypes.h>
 
 /* Fast tolower() alike function that does not care about locale
  * but just returns a-z instead of A-Z. */
@@ -164,6 +165,7 @@ uint64_t siphash(const uint8_t *in, const size_t inlen, const uint8_t *k) {
     SIPROUND;
 
     b = v0 ^ v1 ^ v2 ^ v3;
+    printf("hash %" PRId64 "\n", b);
 #ifndef UNALIGNED_LE_CPU
     U64TO8_LE(out, b);
     return hash;
@@ -224,6 +226,8 @@ uint64_t siphash_nocase(const uint8_t *in, const size_t inlen, const uint8_t *k)
     SIPROUND;
 
     b = v0 ^ v1 ^ v2 ^ v3;
+    printf("hash %" PRId64 "\n", b);
+    
 #ifndef UNALIGNED_LE_CPU
     U64TO8_LE(out, b);
     return hash;
