@@ -72,6 +72,7 @@ typedef struct dictType {
  * implement incremental rehashing, for the old to the new table. */
 typedef struct dictht {
     dictEntry **table;
+    unsigned long next; // for linear hashing
     unsigned long size;
     unsigned long sizemask;
     unsigned long used;

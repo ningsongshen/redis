@@ -42,6 +42,7 @@
 #include <stdarg.h>
 #include <limits.h>
 #include <sys/time.h>
+#include <inttypes.h>
 
 #include "dict.h"
 #include "zmalloc.h"
@@ -102,6 +103,7 @@ uint64_t dictGenCaseHashFunction(const unsigned char *buf, int len) {
 static void _dictReset(dictht *ht)
 {
     ht->table = NULL;
+    ht->next = 0;
     ht->size = 0;
     ht->sizemask = 0;
     ht->used = 0;
@@ -157,11 +159,12 @@ int _dictExpand(dict *d, unsigned long size, int* malloc_failed)
 
     dictht n; /* the new hash table */
     unsigned long realsize = _dictNextPower(size);
-
+    printf("resizing to %lu\n", realsize);
     /* Rehashing to the same table size is not useful. */
     if (realsize == d->ht[0].size) return DICT_ERR;
 
     /* Allocate the new hash table and initialize all pointers to NULL */
+    n.next = d->ht[0].next;
     n.size = realsize;
     n.sizemask = realsize-1;
     if (malloc_failed) {
@@ -177,6 +180,7 @@ int _dictExpand(dict *d, unsigned long size, int* malloc_failed)
     /* Is this the first initialization? If so it's not really a rehashing
      * we just set the first hash table so that it can accept keys. */
     if (d->ht[0].table == NULL) {
+        printf("first initialization\n");
         d->ht[0] = n;
         return DICT_OK;
     }
@@ -212,6 +216,7 @@ int dictRehash(dict *d, int n) {
     int empty_visits = n*10; /* Max number of empty buckets to visit. */
     if (!dictIsRehashing(d)) return 0;
 
+    n = d->ht[0].size;
     while(n-- && d->ht[0].used != 0) {
         dictEntry *de, *nextde;
 
@@ -230,6 +235,7 @@ int dictRehash(dict *d, int n) {
             nextde = de->next;
             /* Get the index in the new hash table */
             h = dictHashKey(d, de->key) & d->ht[1].sizemask;
+            printf("rehashing from %lu to %" PRId64 "\n", d->rehashidx, h);
             de->next = d->ht[1].table[h];
             d->ht[1].table[h] = de;
             d->ht[0].used--;
@@ -328,7 +334,7 @@ dictEntry *dictAddRaw(dict *d, void *key, dictEntry **existing)
      * the element already exists. */
     if ((index = _dictKeyIndex(d, key, dictHashKey(d,key), existing)) == -1)
         return NULL;
-
+    printf("adding to index %ld ", index);
     /* Allocate the memory and store the new entry.
      * Insert the element in top, with the assumption that in a database
      * system it is more likely that recently added entries are accessed
@@ -1014,7 +1020,7 @@ static unsigned long _dictNextPower(unsigned long size)
     while(1) {
         if (i >= size)
             return i;
-        i *= 2;
+        i += 1;
     }
 }
 
