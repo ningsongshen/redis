@@ -42,6 +42,7 @@
 #include <stdarg.h>
 #include <limits.h>
 #include <sys/time.h>
+#include <inttypes.h>
 
 #include "dict.h"
 #include "zmalloc.h"
@@ -163,6 +164,7 @@ int _dictExpand(dict *d, unsigned long size, int* malloc_failed)
 
     /* Allocate the new hash table and initialize all pointers to NULL */
     n.size = realsize;
+    printf("\nexpanding, newsize: %lu ", n.size);
     n.sizemask = realsize-1;
     if (malloc_failed) {
         n.table = ztrycalloc(realsize*sizeof(dictEntry*));
@@ -177,6 +179,7 @@ int _dictExpand(dict *d, unsigned long size, int* malloc_failed)
     /* Is this the first initialization? If so it's not really a rehashing
      * we just set the first hash table so that it can accept keys. */
     if (d->ht[0].table == NULL) {
+        printf(", first initialization. ");
         d->ht[0] = n;
         return DICT_OK;
     }
@@ -212,11 +215,13 @@ int dictRehash(dict *d, int n) {
     int empty_visits = n*10; /* Max number of empty buckets to visit. */
     if (!dictIsRehashing(d)) return 0;
 
+    n = d->ht[0].size; /* ignore steps, rehash entire table */
     while(n-- && d->ht[0].used != 0) {
         dictEntry *de, *nextde;
 
         /* Note that rehashidx can't overflow as we are sure there are more
          * elements because ht[0].used != 0 */
+        printf("\nrehashidx %lu, size %lu, used %lu", d->rehashidx, d->ht[0].size, d->ht[0].used);
         assert(d->ht[0].size > (unsigned long)d->rehashidx);
         while(d->ht[0].table[d->rehashidx] == NULL) {
             d->rehashidx++;
@@ -228,10 +233,15 @@ int dictRehash(dict *d, int n) {
             uint64_t h;
 
             nextde = de->next;
-            /* Get the index in the new hash table */
-            h = dictHashKey(d, de->key) & d->ht[1].sizemask;
+            /* Get the index in the new hash table, which in extendible hashing is the same as the current index */
+            h = d->rehashidx;
+            // printf("\noldsize: %lu, newsize: %lu", d->ht[0].size, d->ht[1].size);
+            printf("\nrehashing item from bucket %lu to bucket %" PRId64 ", ", d->rehashidx, h);
             de->next = d->ht[1].table[h];
+            // de->localDepth = d->ht[1].size;
             d->ht[1].table[h] = de;
+            // d->ht[1].table[h + d->ht[0].size] = de; // in extendible hashing we duplicate the directory
+            // printf("rehashing item from bucket %lu to bucket %" PRId64 ", ", d->rehashidx, h + d->ht[0].size);
             d->ht[0].used--;
             d->ht[1].used++;
             de = nextde;
@@ -329,6 +339,7 @@ dictEntry *dictAddRaw(dict *d, void *key, dictEntry **existing)
     if ((index = _dictKeyIndex(d, key, dictHashKey(d,key), existing)) == -1)
         return NULL;
 
+    printf("adding item to bucket %lu, ", index);
     /* Allocate the memory and store the new entry.
      * Insert the element in top, with the assumption that in a database
      * system it is more likely that recently added entries are accessed
@@ -336,6 +347,7 @@ dictEntry *dictAddRaw(dict *d, void *key, dictEntry **existing)
     ht = dictIsRehashing(d) ? &d->ht[1] : &d->ht[0];
     entry = zmalloc(sizeof(*entry));
     entry->next = ht->table[index];
+    // entry->localDepth = ht->size;
     ht->table[index] = entry;
     ht->used++;
 
