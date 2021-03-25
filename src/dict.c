@@ -159,7 +159,7 @@ int _dictExpand(dict *d, unsigned long size, int* malloc_failed)
 
     dictht n; /* the new hash table */
     unsigned long realsize = _dictNextPower(size);
-    printf("resizing to %lu\n", realsize);
+    // printf("resizing to %lu\n", realsize);
     /* Rehashing to the same table size is not useful. */
     if (realsize == d->ht[0].size) return DICT_ERR;
 
@@ -180,7 +180,7 @@ int _dictExpand(dict *d, unsigned long size, int* malloc_failed)
     /* Is this the first initialization? If so it's not really a rehashing
      * we just set the first hash table so that it can accept keys. */
     if (d->ht[0].table == NULL) {
-        printf("first initialization\n");
+        // printf("first initialization\n");
         d->ht[0] = n;
         return DICT_OK;
     }
@@ -234,8 +234,14 @@ int dictRehash(dict *d, int n) {
 
             nextde = de->next;
             /* Get the index in the new hash table */
-            h = dictHashKey(d, de->key) & d->ht[1].sizemask;
-            printf("rehashing from %lu to %" PRId64 "\n", d->rehashidx, h);
+            if ((unsigned long)d->rehashidx == d->ht->next) {
+                /* This is the bucket we are splitting this round */
+                h = dictHashKey(d, de->key) & d->ht[1].sizemask;
+            } else {
+                /* We are not splitting the bucket this round */
+                h = dictHashKey(d, de->key) & d->ht[0].sizemask;
+            }  
+            // printf("rehashing from %lu to %" PRId64 "\n", d->rehashidx, h);
             de->next = d->ht[1].table[h];
             d->ht[1].table[h] = de;
             d->ht[0].used--;
@@ -252,6 +258,7 @@ int dictRehash(dict *d, int n) {
         d->ht[0] = d->ht[1];
         _dictReset(&d->ht[1]);
         d->rehashidx = -1;
+        d->ht[0].next++; // increment the next counter
         return 0;
     }
 
@@ -334,7 +341,7 @@ dictEntry *dictAddRaw(dict *d, void *key, dictEntry **existing)
      * the element already exists. */
     if ((index = _dictKeyIndex(d, key, dictHashKey(d,key), existing)) == -1)
         return NULL;
-    printf("adding to index %ld ", index);
+    // printf("adding to index %ld ", index);
     /* Allocate the memory and store the new entry.
      * Insert the element in top, with the assumption that in a database
      * system it is more likely that recently added entries are accessed
@@ -515,7 +522,13 @@ dictEntry *dictFind(dict *d, const void *key)
     if (dictIsRehashing(d)) _dictRehashStep(d);
     h = dictHashKey(d, key);
     for (table = 0; table <= 1; table++) {
-        idx = h & d->ht[table].sizemask;
+        idx = h & d->ht[0].sizemask;
+        if(idx <= d->ht[table].next && table == 1) {
+            /* the item is in the second hash table, it is in range 0..next, 
+                therefore we need to look at the second hash function to see
+                which bucket it is in */
+            idx = h & d->ht[1].sizemask;
+        }
         he = d->ht[table].table[idx];
         while(he) {
             if (key==he->key || dictCompareKeys(d, key, he->key))
@@ -524,6 +537,7 @@ dictEntry *dictFind(dict *d, const void *key)
         }
         if (!dictIsRehashing(d)) return NULL;
     }
+
     return NULL;
 }
 
