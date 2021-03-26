@@ -160,8 +160,8 @@ int _dictExpand(dict *d, unsigned long size, int* malloc_failed)
         return DICT_ERR;
 
     dictht n; /* the new hash table */
-    unsigned long realsize = _dictNextStep(size);
-
+    unsigned long realsize = size;
+    printf("newsize: %lu\n", realsize);
     /* Rehashing to the same table size is not useful. */
     if (realsize == d->ht[0].size) return DICT_ERR;
 
@@ -220,6 +220,7 @@ int dictRehash(dict *d, int n) {
     int empty_visits = n*10; /* Max number of empty buckets to visit. */
     if (!dictIsRehashing(d)) return 0;
 
+    n = d->ht[0].size; /* rehash in one go if possible */
     while(n-- && d->ht[0].used != 0) {
         dictEntry *de, *nextde;
 
