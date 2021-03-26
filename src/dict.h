@@ -72,6 +72,8 @@ typedef struct dictType {
  * implement incremental rehashing, for the old to the new table. */
 typedef struct dictht {
     dictEntry **table;
+    unsigned long level;
+    unsigned long next;
     unsigned long size;
     unsigned long sizemask;
     unsigned long used;
@@ -102,7 +104,7 @@ typedef void (dictScanFunction)(void *privdata, const dictEntry *de);
 typedef void (dictScanBucketFunction)(void *privdata, dictEntry **bucketref);
 
 /* This is the initial size of every hash table */
-#define DICT_HT_INITIAL_SIZE     4
+#define DICT_HT_INITIAL_SIZE     2
 
 /* ------------------------------- Macros ------------------------------------*/
 #define dictFreeVal(d, entry) \

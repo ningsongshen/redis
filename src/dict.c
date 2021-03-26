@@ -42,6 +42,7 @@
 #include <stdarg.h>
 #include <limits.h>
 #include <sys/time.h>
+#include <math.h>
 
 #include "dict.h"
 #include "zmalloc.h"
@@ -65,6 +66,7 @@ static unsigned int dict_force_resize_ratio = 5;
 /* -------------------------- private prototypes ---------------------------- */
 
 static int _dictExpandIfNeeded(dict *ht);
+static unsigned long _dictNextStep(unsigned long size);
 static unsigned long _dictNextPower(unsigned long size);
 static long _dictKeyIndex(dict *ht, const void *key, uint64_t hash, dictEntry **existing);
 static int _dictInit(dict *ht, dictType *type, void *privDataPtr);
@@ -102,6 +104,8 @@ uint64_t dictGenCaseHashFunction(const unsigned char *buf, int len) {
 static void _dictReset(dictht *ht)
 {
     ht->table = NULL;
+    ht->level = 0;
+    ht->next = 0;
     ht->size = 0;
     ht->sizemask = 0;
     ht->used = 0;
@@ -156,10 +160,14 @@ int _dictExpand(dict *d, unsigned long size, int* malloc_failed)
         return DICT_ERR;
 
     dictht n; /* the new hash table */
-    unsigned long realsize = _dictNextPower(size);
+    unsigned long realsize = _dictNextStep(size);
 
     /* Rehashing to the same table size is not useful. */
     if (realsize == d->ht[0].size) return DICT_ERR;
+
+    /* Linear hashing initialization */
+    n.level = log(_dictNextPower(realsize)) / log(2); /* C does not provide a log2 func */
+    n.next = 0;
 
     /* Allocate the new hash table and initialize all pointers to NULL */
     n.size = realsize;
@@ -1005,7 +1013,18 @@ static int _dictExpandIfNeeded(dict *d)
     return DICT_OK;
 }
 
-/* Our hash table capability is a power of two */
+/* In linear hashing, the hash table is resized one bucket at a time */
+static unsigned long _dictNextStep(unsigned long size)
+{
+    unsigned long i = DICT_HT_INITIAL_SIZE;
+    if (size >= LONG_MAX) return LONG_MAX + 1LU;
+    if (i > size) {
+        return i;
+    }
+    return size + 1;
+}
+
+/* Our hash function and levels are counted in powers of two */
 static unsigned long _dictNextPower(unsigned long size)
 {
     unsigned long i = DICT_HT_INITIAL_SIZE;
