@@ -43,6 +43,7 @@
 #include <limits.h>
 #include <sys/time.h>
 #include <inttypes.h>
+#include <math.h>
 
 #include "dict.h"
 #include "zmalloc.h"
@@ -103,6 +104,7 @@ uint64_t dictGenCaseHashFunction(const unsigned char *buf, int len) {
 static void _dictReset(dictht *ht)
 {
     ht->table = NULL;
+    ht->level = 0;
     ht->next = 0;
     ht->size = 0;
     ht->sizemask = 0;
@@ -139,7 +141,7 @@ int dictResize(dict *d)
     unsigned long minimal;
 
     if (!dict_can_resize || dictIsRehashing(d)) return DICT_ERR;
-    minimal = d->ht[0].used;
+    minimal = d->ht[0].size;
     if (minimal < DICT_HT_INITIAL_SIZE)
         minimal = DICT_HT_INITIAL_SIZE;
     return dictExpand(d, minimal);
@@ -159,7 +161,6 @@ int _dictExpand(dict *d, unsigned long size, int* malloc_failed)
 
     dictht n; /* the new hash table */
     unsigned long realsize = _dictNextPower(size);
-    // printf("resizing to %lu\n", realsize);
     /* Rehashing to the same table size is not useful. */
     if (realsize == d->ht[0].size) return DICT_ERR;
 
@@ -167,6 +168,7 @@ int _dictExpand(dict *d, unsigned long size, int* malloc_failed)
     n.next = d->ht[0].next;
     n.size = realsize;
     n.sizemask = realsize-1;
+    printf("resizing to %lu, level is %lu, next is %lu\n", n.size, n.level, n.next);
     if (malloc_failed) {
         n.table = ztrycalloc(realsize*sizeof(dictEntry*));
         *malloc_failed = n.table == NULL;
@@ -180,7 +182,7 @@ int _dictExpand(dict *d, unsigned long size, int* malloc_failed)
     /* Is this the first initialization? If so it's not really a rehashing
      * we just set the first hash table so that it can accept keys. */
     if (d->ht[0].table == NULL) {
-        // printf("first initialization\n");
+        printf("first initialization\n");
         d->ht[0] = n;
         return DICT_OK;
     }
@@ -216,7 +218,7 @@ int dictRehash(dict *d, int n) {
     int empty_visits = n*10; /* Max number of empty buckets to visit. */
     if (!dictIsRehashing(d)) return 0;
 
-    n = d->ht[0].size;
+    n = d->ht[0].size; // ignore incremental, try to do everything at once
     while(n-- && d->ht[0].used != 0) {
         dictEntry *de, *nextde;
 
@@ -241,7 +243,7 @@ int dictRehash(dict *d, int n) {
                 /* We are not splitting the bucket this round */
                 h = dictHashKey(d, de->key) & d->ht[0].sizemask;
             }  
-            // printf("rehashing from %lu to %" PRId64 "\n", d->rehashidx, h);
+            printf("rehashing from %lu to %" PRId64 "\n", d->rehashidx, h);
             de->next = d->ht[1].table[h];
             d->ht[1].table[h] = de;
             d->ht[0].used--;
@@ -412,7 +414,10 @@ static dictEntry *dictGenericDelete(dict *d, const void *key, int nofree) {
     h = dictHashKey(d, key);
 
     for (table = 0; table <= 1; table++) {
-        idx = h & d->ht[table].sizemask;
+        idx = h & d->ht[0].sizemask;
+        if (table == 1 && idx <= d->ht[table].next) {
+            idx = h & d->ht[1].sizemask;
+        }
         he = d->ht[table].table[idx];
         prevHe = NULL;
         while(he) {
@@ -523,10 +528,7 @@ dictEntry *dictFind(dict *d, const void *key)
     h = dictHashKey(d, key);
     for (table = 0; table <= 1; table++) {
         idx = h & d->ht[0].sizemask;
-        if(idx <= d->ht[table].next && table == 1) {
-            /* the item is in the second hash table, it is in range 0..next, 
-                therefore we need to look at the second hash function to see
-                which bucket it is in */
+        if (table == 1 && idx <= d->ht[table].next) {
             idx = h & d->ht[1].sizemask;
         }
         he = d->ht[table].table[idx];
@@ -1032,7 +1034,7 @@ static unsigned long _dictNextPower(unsigned long size)
 
     if (size >= LONG_MAX) return LONG_MAX + 1LU;
     while(1) {
-        if (i >= size)
+        if (i > size)
             return i;
         i += 1;
     }
