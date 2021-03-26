@@ -166,7 +166,7 @@ int _dictExpand(dict *d, unsigned long size, int* malloc_failed)
     if (realsize == d->ht[0].size) return DICT_ERR;
 
     /* Linear hashing initialization */
-    n.level = log(_dictNextPower(realsize)) / log(2); /* C does not provide a log2 func */
+    n.level = (log(_dictNextPower(realsize)) / log(2)) - 1; /* C does not provide a log2 func */
     n.next = 0;
 
     /* Allocate the new hash table and initialize all pointers to NULL */
@@ -181,7 +181,7 @@ int _dictExpand(dict *d, unsigned long size, int* malloc_failed)
         n.table = zcalloc(realsize*sizeof(dictEntry*));
 
     n.used = 0;
-
+    printf("size: %lu, level: %lu, next: %lu\n", n.size, n.level, n.next);
     /* Is this the first initialization? If so it's not really a rehashing
      * we just set the first hash table so that it can accept keys. */
     if (d->ht[0].table == NULL) {
