@@ -156,7 +156,8 @@ int _dictExpand(dict *d, unsigned long size, int* malloc_failed)
 
     /* the size is invalid if it is smaller than the number of
      * elements already inside the hash table */
-    if (dictIsRehashing(d) || d->ht[0].used > size)
+    /* actually not, we'll just have a longer chain for linear hashing */
+    if (dictIsRehashing(d))
         return DICT_ERR;
 
     dictht n; /* the new hash table */
@@ -167,7 +168,7 @@ int _dictExpand(dict *d, unsigned long size, int* malloc_failed)
 
     /* Linear hashing initialization */
     n.level = (log(_dictNextPower(realsize)) / log(2)) - 1; /* C does not provide a log2 func */
-    n.next = 0;
+    n.next = (n.level == d->ht[0].level) ? d->ht[0].next + 1 : 0;
 
     /* Allocate the new hash table and initialize all pointers to NULL */
     n.size = realsize;
@@ -186,6 +187,7 @@ int _dictExpand(dict *d, unsigned long size, int* malloc_failed)
      * we just set the first hash table so that it can accept keys. */
     if (d->ht[0].table == NULL) {
         d->ht[0] = n;
+        d->ht[0].next = 0;
         return DICT_OK;
     }
 
@@ -1009,7 +1011,7 @@ static int _dictExpandIfNeeded(dict *d)
          d->ht[0].used/d->ht[0].size > dict_force_resize_ratio) &&
         dictTypeExpandAllowed(d))
     {
-        return dictExpand(d, d->ht[0].used + 1);
+        return dictExpand(d, d->ht[0].size + 1);
     }
     return DICT_OK;
 }
