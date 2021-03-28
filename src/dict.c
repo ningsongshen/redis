@@ -166,6 +166,7 @@ int _dictExpand(dict *d, unsigned long size, int* malloc_failed)
     if (realsize == d->ht[0].size) return DICT_ERR;
 
     /* Linear hashing initialization */
+    // printf("expand realsize %lu\n", realsize);
     n.level = (log(_dictNextPower(realsize)) / log(2)) - 2; /* C does not provide a log2 func */
     n.next = (n.level == d->ht[0].level) ? d->ht[0].next + 1 : 0;
 
@@ -194,6 +195,7 @@ int _dictExpand(dict *d, unsigned long size, int* malloc_failed)
     /* Prepare a second hash table for incremental rehashing */
     d->ht[1] = n;
     d->rehashidx = 0;
+    _dictRehashStep(d);
     return DICT_OK;
 }
 
@@ -247,11 +249,12 @@ int dictRehash(dict *d, int n) {
             /* Get the index in the new hash table */
             // h = dictHashKey(d, de->key) & d->ht[1].sizemask;
             if ((unsigned long)d->rehashidx == d->ht[0].next) {
-                h = dictHashKey(d, de->key) & _linearSizemask(d->ht[1].level);
+                printf("        - use +1\n");
+                h = dictHashKey(d, de->key) & _linearSizemask(d->ht[0].level + 1);
             } else {
                 h = (unsigned long)d->rehashidx;
             }
-            printf("        - bucket from %lu to %lu\n", (unsigned long)d->rehashidx, h);
+            printf("        - %p from %lu to %lu\n", de, (unsigned long)d->rehashidx, h);
             de->next = d->ht[1].table[h];
             d->ht[1].table[h] = de;
             d->ht[0].used--;
@@ -289,10 +292,7 @@ long long timeInMilliseconds(void) {
 int dictRehashMilliseconds(dict *d, int ms) {
     if (d->pauserehash > 0) return 0;
 
-    long long start = timeInMilliseconds();
-    int rehashes = 0;
-
-    dictRehash(d,INT_MAX);
+    dictRehash(d, ms);
     return INT_MAX;
 }
 
@@ -358,7 +358,7 @@ dictEntry *dictAddRaw(dict *d, void *key, dictEntry **existing)
     entry->next = ht->table[index];
     ht->table[index] = entry;
     ht->used++;
-    printf("    - rehashidx %ld, ht0used %lu ht1used %lu\n", (unsigned long)d->rehashidx, d->ht[0].used, d->ht[1].used);
+    printf("    - %p rehashidx %ld, ht0used %lu ht1used %lu\n", entry, (unsigned long)d->rehashidx, d->ht[0].used, d->ht[1].used);
     /* Set the hash entry fields. */
     dictSetKey(d, entry, key);
     return entry;
@@ -417,7 +417,7 @@ static dictEntry *dictGenericDelete(dict *d, const void *key, int nofree) {
 
     if (dictIsRehashing(d)) _dictRehashStep(d);
     h = dictHashKey(d, key);
-
+    printf("DELETE\n");
     for (table = 0; table <= 1; table++) {
         idx = h & d->ht[table].sizemask;
         he = d->ht[table].table[idx];
@@ -1022,6 +1022,8 @@ static int _dictExpandIfNeeded(dict *d)
     {
         return dictExpand(d, d->ht[0].size + 1);
     }
+
+    _dictRehashStep(d);
     return DICT_OK;
 }
 
@@ -1065,9 +1067,9 @@ static long _dictKeyIndex(dict *d, const void *key, uint64_t hash, dictEntry **e
         printf("    - ht1: size %lu, level %lu, next %lu, linearsizemask %lu\n", d->ht[1].size, d->ht[1].level, d->ht[1].next, _linearSizemask(d->ht[1].level));
         // idx = hash & d->ht[table].sizemask;
         idx = hash & _linearSizemask(d->ht[0].level);
-        if (table == 1 && idx < d->ht[0].next) {
+        if (idx <= d->ht[0].next) {
             printf("    - use new level\n");
-            idx = hash & _linearSizemask(d->ht[1].level);
+            idx = hash & _linearSizemask(d->ht[0].level + 1);
         }
         printf("    - to table %lu bucket %lu\n", table, idx);
         /* Search if this slot does not already contain the given key */
@@ -1114,7 +1116,12 @@ dictEntry **dictFindEntryRefByPtrAndHash(dict *d, const void *oldptr, uint64_t h
 
     if (dictSize(d) == 0) return NULL; /* dict is empty */
     for (table = 0; table <= 1; table++) {
-        idx = hash & d->ht[table].sizemask;
+        // idx = hash & d->ht[table].sizemask;
+        idx = hash & _linearSizemask(d->ht[0].level);
+        if (idx < d->ht[0].next) {
+            printf("    - use new level\n");
+            idx = hash & _linearSizemask(d->ht[0].level + 1);
+        }
         heref = &d->ht[table].table[idx];
         he = *heref;
         while(he) {
