@@ -66,7 +66,7 @@ static unsigned int dict_force_resize_ratio = 5;
 /* -------------------------- private prototypes ---------------------------- */
 
 static int _dictExpandIfNeeded(dict *ht);
-static unsigned long _dictNextStep(unsigned long size);
+static unsigned long _linearSizemask(unsigned long size);
 static unsigned long _dictNextPower(unsigned long size);
 static long _dictKeyIndex(dict *ht, const void *key, uint64_t hash, dictEntry **existing);
 static int _dictInit(dict *ht, dictType *type, void *privDataPtr);
@@ -162,12 +162,11 @@ int _dictExpand(dict *d, unsigned long size, int* malloc_failed)
 
     dictht n; /* the new hash table */
     unsigned long realsize = size;
-    printf("newsize: %lu\n", realsize);
     /* Rehashing to the same table size is not useful. */
     if (realsize == d->ht[0].size) return DICT_ERR;
 
     /* Linear hashing initialization */
-    n.level = (log(_dictNextPower(realsize)) / log(2)) - 1; /* C does not provide a log2 func */
+    n.level = (log(_dictNextPower(realsize)) / log(2)) - 2; /* C does not provide a log2 func */
     n.next = (n.level == d->ht[0].level) ? d->ht[0].next + 1 : 0;
 
     /* Allocate the new hash table and initialize all pointers to NULL */
@@ -182,10 +181,11 @@ int _dictExpand(dict *d, unsigned long size, int* malloc_failed)
         n.table = zcalloc(realsize*sizeof(dictEntry*));
 
     n.used = 0;
-    printf("size: %lu, level: %lu, next: %lu\n", n.size, n.level, n.next);
+    printf("EXPAND %p (newsize: %lu, level: %lu, next: %lu)\n", d, n.size, n.level, n.next);
     /* Is this the first initialization? If so it's not really a rehashing
      * we just set the first hash table so that it can accept keys. */
     if (d->ht[0].table == NULL) {
+        printf("    - first initialization\n");
         d->ht[0] = n;
         d->ht[0].next = 0;
         return DICT_OK;
@@ -219,17 +219,22 @@ int dictTryExpand(dict *d, unsigned long size) {
  * will visit at max N*10 empty buckets in total, otherwise the amount of
  * work it does would be unbound and the function may block for a long time. */
 int dictRehash(dict *d, int n) {
-    int empty_visits = n*10; /* Max number of empty buckets to visit. */
+    int empty_visits = INT_MAX; /* Max number of empty buckets to visit. */
     if (!dictIsRehashing(d)) return 0;
 
-    n = d->ht[0].size; /* rehash in one go if possible */
+    n = INT_MAX; /* rehash in one go if possible */
+    printf("REHASH %p\n", d);
+    printf("    - ht0: size %lu, level %lu, next %lu, linearsizemask %lu\n", d->ht[0].size, d->ht[0].level, d->ht[0].next, _linearSizemask(d->ht[0].level));
+    printf("    - ht1: size %lu, level %lu, next %lu, linearsizemask %lu\n", d->ht[1].size, d->ht[1].level, d->ht[1].next, _linearSizemask(d->ht[1].level));
     while(n-- && d->ht[0].used != 0) {
         dictEntry *de, *nextde;
 
         /* Note that rehashidx can't overflow as we are sure there are more
          * elements because ht[0].used != 0 */
+        printf("    - rehashidx %ld, ht0used %lu ht1used %lu\n", (unsigned long)d->rehashidx, d->ht[0].used, d->ht[1].used);
         assert(d->ht[0].size > (unsigned long)d->rehashidx);
         while(d->ht[0].table[d->rehashidx] == NULL) {
+            printf("        - bucket skip %lu\n", (unsigned long)d->rehashidx);
             d->rehashidx++;
             if (--empty_visits == 0) return 1;
         }
@@ -240,7 +245,13 @@ int dictRehash(dict *d, int n) {
 
             nextde = de->next;
             /* Get the index in the new hash table */
-            h = dictHashKey(d, de->key) & d->ht[1].sizemask;
+            // h = dictHashKey(d, de->key) & d->ht[1].sizemask;
+            if ((unsigned long)d->rehashidx == d->ht[0].next) {
+                h = dictHashKey(d, de->key) & _linearSizemask(d->ht[1].level);
+            } else {
+                h = (unsigned long)d->rehashidx;
+            }
+            printf("        - bucket from %lu to %lu\n", (unsigned long)d->rehashidx, h);
             de->next = d->ht[1].table[h];
             d->ht[1].table[h] = de;
             d->ht[0].used--;
@@ -253,6 +264,7 @@ int dictRehash(dict *d, int n) {
 
     /* Check if we already rehashed the whole table... */
     if (d->ht[0].used == 0) {
+        printf("    - rehashidx %ld, ht0used %lu ht1used %lu\n", (unsigned long)d->rehashidx, d->ht[0].used, d->ht[1].used);
         zfree(d->ht[0].table);
         d->ht[0] = d->ht[1];
         _dictReset(&d->ht[1]);
@@ -280,11 +292,8 @@ int dictRehashMilliseconds(dict *d, int ms) {
     long long start = timeInMilliseconds();
     int rehashes = 0;
 
-    while(dictRehash(d,100)) {
-        rehashes += 100;
-        if (timeInMilliseconds()-start > ms) break;
-    }
-    return rehashes;
+    dictRehash(d,INT_MAX);
+    return INT_MAX;
 }
 
 /* This function performs just a step of rehashing, and only if hashing has
@@ -296,7 +305,7 @@ int dictRehashMilliseconds(dict *d, int ms) {
  * dictionary so that the hash table automatically migrates from H1 to H2
  * while it is actively used. */
 static void _dictRehashStep(dict *d) {
-    if (d->pauserehash == 0) dictRehash(d,1);
+    if (d->pauserehash == 0) dictRehash(d,INT_MAX);
 }
 
 /* Add an element to the target hash table */
@@ -349,7 +358,7 @@ dictEntry *dictAddRaw(dict *d, void *key, dictEntry **existing)
     entry->next = ht->table[index];
     ht->table[index] = entry;
     ht->used++;
-
+    printf("    - rehashidx %ld, ht0used %lu ht1used %lu\n", (unsigned long)d->rehashidx, d->ht[0].used, d->ht[1].used);
     /* Set the hash entry fields. */
     dictSetKey(d, entry, key);
     return entry;
@@ -1016,15 +1025,9 @@ static int _dictExpandIfNeeded(dict *d)
     return DICT_OK;
 }
 
-/* In linear hashing, the hash table is resized one bucket at a time */
-static unsigned long _dictNextStep(unsigned long size)
+static unsigned long _linearSizemask(unsigned long level)
 {
-    unsigned long i = DICT_HT_INITIAL_SIZE;
-    if (size >= LONG_MAX) return LONG_MAX + 1LU;
-    if (i > size) {
-        return i;
-    }
-    return size + 1;
+    return(DICT_HT_INITIAL_SIZE * (unsigned long)pow(2, level) - 1);
 }
 
 /* Our hash function and levels are counted in powers of two */
@@ -1034,8 +1037,8 @@ static unsigned long _dictNextPower(unsigned long size)
 
     if (size >= LONG_MAX) return LONG_MAX + 1LU;
     while(1) {
-        if (i >= size)
-            return i;
+        if (i > size)
+            return i / 2;
         i *= 2;
     }
 }
@@ -1057,7 +1060,16 @@ static long _dictKeyIndex(dict *d, const void *key, uint64_t hash, dictEntry **e
     if (_dictExpandIfNeeded(d) == DICT_ERR)
         return -1;
     for (table = 0; table <= 1; table++) {
-        idx = hash & d->ht[table].sizemask;
+        printf("ADD %p\n", d);
+        printf("    - ht0: size %lu, level %lu, next %lu, linearsizemask %lu\n", d->ht[0].size, d->ht[0].level, d->ht[0].next, _linearSizemask(d->ht[0].level));
+        printf("    - ht1: size %lu, level %lu, next %lu, linearsizemask %lu\n", d->ht[1].size, d->ht[1].level, d->ht[1].next, _linearSizemask(d->ht[1].level));
+        // idx = hash & d->ht[table].sizemask;
+        idx = hash & _linearSizemask(d->ht[0].level);
+        if (table == 1 && idx < d->ht[0].next) {
+            printf("    - use new level\n");
+            idx = hash & _linearSizemask(d->ht[1].level);
+        }
+        printf("    - to table %lu bucket %lu\n", table, idx);
         /* Search if this slot does not already contain the given key */
         he = d->ht[table].table[idx];
         while(he) {
