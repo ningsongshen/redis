@@ -42,6 +42,7 @@
 #include <stdarg.h>
 #include <limits.h>
 #include <sys/time.h>
+#include <math.h> /* linear hashing: calculate the level and N buckets */
 
 #include "dict.h"
 #include "zmalloc.h"
@@ -65,9 +66,11 @@ static unsigned int dict_force_resize_ratio = 5;
 /* -------------------------- private prototypes ---------------------------- */
 
 static int _dictExpandIfNeeded(dict *ht);
+static unsigned long _linearSizemask(unsigned long size);
 static unsigned long _dictNextPower(unsigned long size);
 static long _dictKeyIndex(dict *ht, const void *key, uint64_t hash, dictEntry **existing);
 static int _dictInit(dict *ht, dictType *type, void *privDataPtr);
+static void _dictRehashStep(dict *d);
 
 /* -------------------------- hash functions -------------------------------- */
 
@@ -102,6 +105,8 @@ uint64_t dictGenCaseHashFunction(const unsigned char *buf, int len) {
 static void _dictReset(dictht *ht)
 {
     ht->table = NULL;
+    ht->level = 0;
+    ht->next = 0;
     ht->size = 0;
     ht->sizemask = 0;
     ht->used = 0;
@@ -151,15 +156,29 @@ int _dictExpand(dict *d, unsigned long size, int* malloc_failed)
     if (malloc_failed) *malloc_failed = 0;
 
     /* the size is invalid if it is smaller than the number of
-     * elements already inside the hash table */
-    if (dictIsRehashing(d) || d->ht[0].used > size)
+     * elements already inside the hash table
+     * 
+     * linear hashing: ignore this, will accept longer chains */
+    if (dictIsRehashing(d))
         return DICT_ERR;
 
     dictht n; /* the new hash table */
-    unsigned long realsize = _dictNextPower(size);
+    unsigned long realsize = size;
+    
+    /* linear hashing: new size cannot be smaller than the initial size */
+    if (size < DICT_HT_INITIAL_SIZE) {
+        realsize = DICT_HT_INITIAL_SIZE;
+    }
 
     /* Rehashing to the same table size is not useful. */
     if (realsize == d->ht[0].size) return DICT_ERR;
+
+    /* linear hashing: initialize relevant counters */
+    n.level = (log(_dictNextPower(realsize)) / log(2)) - 2; /* C does not provide a log2 func */
+    n.next = d->ht[0].next + 1;
+    if (n.level != d->ht[0].level) {
+        n.next = 0; /* new level means we reset next to 0 */
+    }
 
     /* Allocate the new hash table and initialize all pointers to NULL */
     n.size = realsize;
@@ -178,12 +197,14 @@ int _dictExpand(dict *d, unsigned long size, int* malloc_failed)
      * we just set the first hash table so that it can accept keys. */
     if (d->ht[0].table == NULL) {
         d->ht[0] = n;
+        d->ht[0].next = 0; /* linear hashing: set next to 0 */
         return DICT_OK;
     }
 
     /* Prepare a second hash table for incremental rehashing */
     d->ht[1] = n;
     d->rehashidx = 0;
+    _dictRehashStep(d); /* linear hashing: do rehashing if possible */
     return DICT_OK;
 }
 
@@ -209,9 +230,10 @@ int dictTryExpand(dict *d, unsigned long size) {
  * will visit at max N*10 empty buckets in total, otherwise the amount of
  * work it does would be unbound and the function may block for a long time. */
 int dictRehash(dict *d, int n) {
-    int empty_visits = n*10; /* Max number of empty buckets to visit. */
+    int empty_visits = INT_MAX; /* linear hashing: ignore empty buckets */
     if (!dictIsRehashing(d)) return 0;
 
+    n = INT_MAX; /* linear hashing: rehash all buckets at once */
     while(n-- && d->ht[0].used != 0) {
         dictEntry *de, *nextde;
 
@@ -229,7 +251,13 @@ int dictRehash(dict *d, int n) {
 
             nextde = de->next;
             /* Get the index in the new hash table */
-            h = dictHashKey(d, de->key) & d->ht[1].sizemask;
+            if ((unsigned long)d->rehashidx == d->ht[0].next) {
+                /* linear hashing: do a split */
+                h = dictHashKey(d, de->key) & _linearSizemask(d->ht[0].level + 1);
+            } else {
+                /* linear hashing: copy the bucket number */
+                h = (unsigned long)d->rehashidx;
+            }
             de->next = d->ht[1].table[h];
             d->ht[1].table[h] = de;
             d->ht[0].used--;
@@ -262,18 +290,14 @@ long long timeInMilliseconds(void) {
 
 /* Rehash in ms+"delta" milliseconds. The value of "delta" is larger 
  * than 0, and is smaller than 1 in most cases. The exact upper bound 
- * depends on the running time of dictRehash(d,100).*/
+ * depends on the running time of dictRehash(d,100).
+ * 
+ * linear hashing: ignore, do all rehashing at once */
 int dictRehashMilliseconds(dict *d, int ms) {
     if (d->pauserehash > 0) return 0;
 
-    long long start = timeInMilliseconds();
-    int rehashes = 0;
-
-    while(dictRehash(d,100)) {
-        rehashes += 100;
-        if (timeInMilliseconds()-start > ms) break;
-    }
-    return rehashes;
+    dictRehash(d, ms);
+    return INT_MAX;
 }
 
 /* This function performs just a step of rehashing, and only if hashing has
@@ -283,9 +307,11 @@ int dictRehashMilliseconds(dict *d, int ms) {
  *
  * This function is called by common lookup or update operations in the
  * dictionary so that the hash table automatically migrates from H1 to H2
- * while it is actively used. */
+ * while it is actively used.
+ * 
+ * linear hashing: ignore, do all rehashing at once */
 static void _dictRehashStep(dict *d) {
-    if (d->pauserehash == 0) dictRehash(d,1);
+    if (d->pauserehash == 0) dictRehash(d,INT_MAX);
 }
 
 /* Add an element to the target hash table */
@@ -397,9 +423,12 @@ static dictEntry *dictGenericDelete(dict *d, const void *key, int nofree) {
 
     if (dictIsRehashing(d)) _dictRehashStep(d);
     h = dictHashKey(d, key);
-
     for (table = 0; table <= 1; table++) {
-        idx = h & d->ht[table].sizemask;
+        idx = h & _linearSizemask(d->ht[0].level);
+        if (idx < d->ht[0].next) {
+            /* linear hashing: entry could be in bucket or split image */
+            idx = h & _linearSizemask(d->ht[0].level + 1);
+        }
         he = d->ht[table].table[idx];
         prevHe = NULL;
         while(he) {
@@ -509,7 +538,11 @@ dictEntry *dictFind(dict *d, const void *key)
     if (dictIsRehashing(d)) _dictRehashStep(d);
     h = dictHashKey(d, key);
     for (table = 0; table <= 1; table++) {
-        idx = h & d->ht[table].sizemask;
+        idx = h & _linearSizemask(d->ht[0].level);
+        if (idx < d->ht[0].next) {
+            /* linear hashing: entry could be in bucket or split image */
+            idx = h & _linearSizemask(d->ht[0].level + 1);
+        }
         he = d->ht[table].table[idx];
         while(he) {
             if (key==he->key || dictCompareKeys(d, key, he->key))
@@ -1000,20 +1033,26 @@ static int _dictExpandIfNeeded(dict *d)
          d->ht[0].used/d->ht[0].size > dict_force_resize_ratio) &&
         dictTypeExpandAllowed(d))
     {
-        return dictExpand(d, d->ht[0].used + 1);
+        return dictExpand(d, d->ht[0].size + 1); /* linear hashing: increment size by 1 only */
     }
     return DICT_OK;
 }
 
-/* Our hash table capability is a power of two */
+/* linear hashing: given a level, find the number of buckets at beginning of round */
+static unsigned long _linearSizemask(unsigned long level)
+{
+    return(DICT_HT_INITIAL_SIZE * (unsigned long)pow(2, level) - 1);
+}
+
+/* Our levels are counted in powers of two */
 static unsigned long _dictNextPower(unsigned long size)
 {
     unsigned long i = DICT_HT_INITIAL_SIZE;
 
     if (size >= LONG_MAX) return LONG_MAX + 1LU;
     while(1) {
-        if (i >= size)
-            return i;
+        if (i > size)
+            return i / 2;
         i *= 2;
     }
 }
@@ -1035,7 +1074,11 @@ static long _dictKeyIndex(dict *d, const void *key, uint64_t hash, dictEntry **e
     if (_dictExpandIfNeeded(d) == DICT_ERR)
         return -1;
     for (table = 0; table <= 1; table++) {
-        idx = hash & d->ht[table].sizemask;
+        idx = hash & _linearSizemask(d->ht[0].level);
+        if (idx < d->ht[0].next) {
+            /* linear hashing: entry could belong in bucket or split image */
+            idx = hash & _linearSizemask(d->ht[0].level + 1);
+        }
         /* Search if this slot does not already contain the given key */
         he = d->ht[table].table[idx];
         while(he) {
@@ -1080,7 +1123,11 @@ dictEntry **dictFindEntryRefByPtrAndHash(dict *d, const void *oldptr, uint64_t h
 
     if (dictSize(d) == 0) return NULL; /* dict is empty */
     for (table = 0; table <= 1; table++) {
-        idx = hash & d->ht[table].sizemask;
+        idx = hash & _linearSizemask(d->ht[0].level);
+        if (idx < d->ht[0].next) {
+            /* linear hashing: entry could be in bucket or split image */
+            idx = hash & _linearSizemask(d->ht[0].level + 1);
+        }
         heref = &d->ht[table].table[idx];
         he = *heref;
         while(he) {
@@ -1225,7 +1272,7 @@ int main(int argc, char **argv) {
     if (argc == 2) {
         count = strtol(argv[1],NULL,10);
     } else {
-        count = 5000000;
+        count = 50000; /* linear hashing: conduct smaller tests */
     }
 
     start_benchmark();

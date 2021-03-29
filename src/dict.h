@@ -72,6 +72,8 @@ typedef struct dictType {
  * implement incremental rehashing, for the old to the new table. */
 typedef struct dictht {
     dictEntry **table;
+    unsigned long level; /* linear hashing: level indicates current round number */
+    unsigned long next; /* linear hashing: next indicates bucket to be split */
     unsigned long size;
     unsigned long sizemask;
     unsigned long used;
