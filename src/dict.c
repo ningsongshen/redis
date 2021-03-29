@@ -70,6 +70,7 @@ static unsigned long _linearSizemask(unsigned long size);
 static unsigned long _dictNextPower(unsigned long size);
 static long _dictKeyIndex(dict *ht, const void *key, uint64_t hash, dictEntry **existing);
 static int _dictInit(dict *ht, dictType *type, void *privDataPtr);
+static void _dictRehashStep(dict *d);
 
 /* -------------------------- hash functions -------------------------------- */
 
@@ -161,7 +162,7 @@ int _dictExpand(dict *d, unsigned long size, int* malloc_failed)
         return DICT_ERR;
 
     dictht n; /* the new hash table */
-    unsigned long realsize = size;
+    unsigned long realsize = size < DICT_HT_INITIAL_SIZE ? DICT_HT_INITIAL_SIZE : size;
     /* Rehashing to the same table size is not useful. */
     if (realsize == d->ht[0].size) return DICT_ERR;
 
@@ -419,7 +420,11 @@ static dictEntry *dictGenericDelete(dict *d, const void *key, int nofree) {
     h = dictHashKey(d, key);
     printf("DELETE\n");
     for (table = 0; table <= 1; table++) {
-        idx = h & d->ht[table].sizemask;
+        idx = h & _linearSizemask(d->ht[0].level);
+        if (idx < d->ht[0].next) {
+            printf("    - use new level\n");
+            idx = h & _linearSizemask(d->ht[0].level + 1);
+        }
         he = d->ht[table].table[idx];
         prevHe = NULL;
         while(he) {
@@ -529,7 +534,11 @@ dictEntry *dictFind(dict *d, const void *key)
     if (dictIsRehashing(d)) _dictRehashStep(d);
     h = dictHashKey(d, key);
     for (table = 0; table <= 1; table++) {
-        idx = h & d->ht[table].sizemask;
+        idx = h & _linearSizemask(d->ht[0].level);
+        if (idx < d->ht[0].next) {
+            printf("    - use new level\n");
+            idx = h & _linearSizemask(d->ht[0].level + 1);
+        }
         he = d->ht[table].table[idx];
         while(he) {
             if (key==he->key || dictCompareKeys(d, key, he->key))
@@ -1023,7 +1032,6 @@ static int _dictExpandIfNeeded(dict *d)
         return dictExpand(d, d->ht[0].size + 1);
     }
 
-    _dictRehashStep(d);
     return DICT_OK;
 }
 
@@ -1067,7 +1075,7 @@ static long _dictKeyIndex(dict *d, const void *key, uint64_t hash, dictEntry **e
         printf("    - ht1: size %lu, level %lu, next %lu, linearsizemask %lu\n", d->ht[1].size, d->ht[1].level, d->ht[1].next, _linearSizemask(d->ht[1].level));
         // idx = hash & d->ht[table].sizemask;
         idx = hash & _linearSizemask(d->ht[0].level);
-        if (idx <= d->ht[0].next) {
+        if (idx < d->ht[0].next) {
             printf("    - use new level\n");
             idx = hash & _linearSizemask(d->ht[0].level + 1);
         }
