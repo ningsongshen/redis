@@ -183,11 +183,11 @@ int _dictExpand(dict *d, unsigned long size, int* malloc_failed)
         n.table = zcalloc(realsize*sizeof(dictEntry*));
 
     n.used = 0;
-    printf("EXPAND %p (newsize: %lu, level: %lu, next: %lu)\n", d, n.size, n.level, n.next);
+    // printf("EXPAND %p (newsize: %lu, level: %lu, next: %lu)\n", d, n.size, n.level, n.next);
     /* Is this the first initialization? If so it's not really a rehashing
      * we just set the first hash table so that it can accept keys. */
     if (d->ht[0].table == NULL) {
-        printf("    - first initialization\n");
+        // printf("    - first initialization\n");
         d->ht[0] = n;
         d->ht[0].next = 0;
         return DICT_OK;
@@ -226,18 +226,18 @@ int dictRehash(dict *d, int n) {
     if (!dictIsRehashing(d)) return 0;
 
     n = INT_MAX; /* rehash in one go if possible */
-    printf("REHASH %p\n", d);
-    printf("    - ht0: size %lu, level %lu, next %lu, linearsizemask %lu\n", d->ht[0].size, d->ht[0].level, d->ht[0].next, _linearSizemask(d->ht[0].level));
-    printf("    - ht1: size %lu, level %lu, next %lu, linearsizemask %lu\n", d->ht[1].size, d->ht[1].level, d->ht[1].next, _linearSizemask(d->ht[1].level));
+    // printf("REHASH %p\n", d);
+    // printf("    - ht0: size %lu, level %lu, next %lu, linearsizemask %lu\n", d->ht[0].size, d->ht[0].level, d->ht[0].next, _linearSizemask(d->ht[0].level));
+    // printf("    - ht1: size %lu, level %lu, next %lu, linearsizemask %lu\n", d->ht[1].size, d->ht[1].level, d->ht[1].next, _linearSizemask(d->ht[1].level));
     while(n-- && d->ht[0].used != 0) {
         dictEntry *de, *nextde;
 
         /* Note that rehashidx can't overflow as we are sure there are more
          * elements because ht[0].used != 0 */
-        printf("    - rehashidx %ld, ht0used %lu ht1used %lu\n", (unsigned long)d->rehashidx, d->ht[0].used, d->ht[1].used);
+        // printf("    - rehashidx %ld, ht0used %lu ht1used %lu\n", (unsigned long)d->rehashidx, d->ht[0].used, d->ht[1].used);
         assert(d->ht[0].size > (unsigned long)d->rehashidx);
         while(d->ht[0].table[d->rehashidx] == NULL) {
-            printf("        - bucket skip %lu\n", (unsigned long)d->rehashidx);
+            // printf("        - bucket skip %lu\n", (unsigned long)d->rehashidx);
             d->rehashidx++;
             if (--empty_visits == 0) return 1;
         }
@@ -250,12 +250,12 @@ int dictRehash(dict *d, int n) {
             /* Get the index in the new hash table */
             // h = dictHashKey(d, de->key) & d->ht[1].sizemask;
             if ((unsigned long)d->rehashidx == d->ht[0].next) {
-                printf("        - use +1\n");
+                // printf("        - use +1\n");
                 h = dictHashKey(d, de->key) & _linearSizemask(d->ht[0].level + 1);
             } else {
                 h = (unsigned long)d->rehashidx;
             }
-            printf("        - %p from %lu to %lu\n", de, (unsigned long)d->rehashidx, h);
+            // printf("        - %p from %lu to %lu\n", de, (unsigned long)d->rehashidx, h);
             de->next = d->ht[1].table[h];
             d->ht[1].table[h] = de;
             d->ht[0].used--;
@@ -268,7 +268,7 @@ int dictRehash(dict *d, int n) {
 
     /* Check if we already rehashed the whole table... */
     if (d->ht[0].used == 0) {
-        printf("    - rehashidx %ld, ht0used %lu ht1used %lu\n", (unsigned long)d->rehashidx, d->ht[0].used, d->ht[1].used);
+        // printf("    - rehashidx %ld, ht0used %lu ht1used %lu\n", (unsigned long)d->rehashidx, d->ht[0].used, d->ht[1].used);
         zfree(d->ht[0].table);
         d->ht[0] = d->ht[1];
         _dictReset(&d->ht[1]);
@@ -359,7 +359,7 @@ dictEntry *dictAddRaw(dict *d, void *key, dictEntry **existing)
     entry->next = ht->table[index];
     ht->table[index] = entry;
     ht->used++;
-    printf("    - %p rehashidx %ld, ht0used %lu ht1used %lu\n", entry, (unsigned long)d->rehashidx, d->ht[0].used, d->ht[1].used);
+    // printf("    - %p rehashidx %ld, ht0used %lu ht1used %lu\n", entry, (unsigned long)d->rehashidx, d->ht[0].used, d->ht[1].used);
     /* Set the hash entry fields. */
     dictSetKey(d, entry, key);
     return entry;
@@ -418,11 +418,11 @@ static dictEntry *dictGenericDelete(dict *d, const void *key, int nofree) {
 
     if (dictIsRehashing(d)) _dictRehashStep(d);
     h = dictHashKey(d, key);
-    printf("DELETE\n");
+    // printf("DELETE\n");
     for (table = 0; table <= 1; table++) {
         idx = h & _linearSizemask(d->ht[0].level);
         if (idx < d->ht[0].next) {
-            printf("    - use new level\n");
+            // printf("    - use new level\n");
             idx = h & _linearSizemask(d->ht[0].level + 1);
         }
         he = d->ht[table].table[idx];
@@ -536,7 +536,7 @@ dictEntry *dictFind(dict *d, const void *key)
     for (table = 0; table <= 1; table++) {
         idx = h & _linearSizemask(d->ht[0].level);
         if (idx < d->ht[0].next) {
-            printf("    - use new level\n");
+            // printf("    - use new level\n");
             idx = h & _linearSizemask(d->ht[0].level + 1);
         }
         he = d->ht[table].table[idx];
@@ -1070,16 +1070,16 @@ static long _dictKeyIndex(dict *d, const void *key, uint64_t hash, dictEntry **e
     if (_dictExpandIfNeeded(d) == DICT_ERR)
         return -1;
     for (table = 0; table <= 1; table++) {
-        printf("ADD %p\n", d);
-        printf("    - ht0: size %lu, level %lu, next %lu, linearsizemask %lu\n", d->ht[0].size, d->ht[0].level, d->ht[0].next, _linearSizemask(d->ht[0].level));
-        printf("    - ht1: size %lu, level %lu, next %lu, linearsizemask %lu\n", d->ht[1].size, d->ht[1].level, d->ht[1].next, _linearSizemask(d->ht[1].level));
+        // printf("ADD %p\n", d);
+        // printf("    - ht0: size %lu, level %lu, next %lu, linearsizemask %lu\n", d->ht[0].size, d->ht[0].level, d->ht[0].next, _linearSizemask(d->ht[0].level));
+        // printf("    - ht1: size %lu, level %lu, next %lu, linearsizemask %lu\n", d->ht[1].size, d->ht[1].level, d->ht[1].next, _linearSizemask(d->ht[1].level));
         // idx = hash & d->ht[table].sizemask;
         idx = hash & _linearSizemask(d->ht[0].level);
         if (idx < d->ht[0].next) {
-            printf("    - use new level\n");
+            // printf("    - use new level\n");
             idx = hash & _linearSizemask(d->ht[0].level + 1);
         }
-        printf("    - to table %lu bucket %lu\n", table, idx);
+        // printf("    - to table %lu bucket %lu\n", table, idx);
         /* Search if this slot does not already contain the given key */
         he = d->ht[table].table[idx];
         while(he) {
@@ -1127,7 +1127,7 @@ dictEntry **dictFindEntryRefByPtrAndHash(dict *d, const void *oldptr, uint64_t h
         // idx = hash & d->ht[table].sizemask;
         idx = hash & _linearSizemask(d->ht[0].level);
         if (idx < d->ht[0].next) {
-            printf("    - use new level\n");
+            // printf("    - use new level\n");
             idx = hash & _linearSizemask(d->ht[0].level + 1);
         }
         heref = &d->ht[table].table[idx];
@@ -1274,7 +1274,7 @@ int main(int argc, char **argv) {
     if (argc == 2) {
         count = strtol(argv[1],NULL,10);
     } else {
-        count = 5000000;
+        count = 50000;
     }
 
     start_benchmark();
