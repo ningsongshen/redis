@@ -364,6 +364,7 @@ dictEntry *dictAddRaw(dict *d, void *key, dictEntry **existing)
     entry->next = ht->table[index];
     ht->table[index] = entry;
     ht->used++;
+
     /* Set the hash entry fields. */
     dictSetKey(d, entry, key);
     return entry;
@@ -425,7 +426,7 @@ static dictEntry *dictGenericDelete(dict *d, const void *key, int nofree) {
     for (table = 0; table <= 1; table++) {
         idx = h & _linearSizemask(d->ht[0].level);
         if (idx < d->ht[0].next) {
-            // printf("    - use new level\n");
+            /* linear hashing: entry could be in bucket or split image */
             idx = h & _linearSizemask(d->ht[0].level + 1);
         }
         he = d->ht[table].table[idx];
@@ -539,7 +540,7 @@ dictEntry *dictFind(dict *d, const void *key)
     for (table = 0; table <= 1; table++) {
         idx = h & _linearSizemask(d->ht[0].level);
         if (idx < d->ht[0].next) {
-            // printf("    - use new level\n");
+            /* linear hashing: entry could be in bucket or split image */
             idx = h & _linearSizemask(d->ht[0].level + 1);
         }
         he = d->ht[table].table[idx];
@@ -1032,18 +1033,18 @@ static int _dictExpandIfNeeded(dict *d)
          d->ht[0].used/d->ht[0].size > dict_force_resize_ratio) &&
         dictTypeExpandAllowed(d))
     {
-        return dictExpand(d, d->ht[0].size + 1);
+        return dictExpand(d, d->ht[0].size + 1); /* linear hashing: increment size by 1 only */
     }
-
     return DICT_OK;
 }
 
+/* linear hashing: given a level, find the number of buckets at beginning of round */
 static unsigned long _linearSizemask(unsigned long level)
 {
     return(DICT_HT_INITIAL_SIZE * (unsigned long)pow(2, level) - 1);
 }
 
-/* Our hash function and levels are counted in powers of two */
+/* Our levels are counted in powers of two */
 static unsigned long _dictNextPower(unsigned long size)
 {
     unsigned long i = DICT_HT_INITIAL_SIZE;
@@ -1073,16 +1074,11 @@ static long _dictKeyIndex(dict *d, const void *key, uint64_t hash, dictEntry **e
     if (_dictExpandIfNeeded(d) == DICT_ERR)
         return -1;
     for (table = 0; table <= 1; table++) {
-        // printf("ADD %p\n", d);
-        // printf("    - ht0: size %lu, level %lu, next %lu, linearsizemask %lu\n", d->ht[0].size, d->ht[0].level, d->ht[0].next, _linearSizemask(d->ht[0].level));
-        // printf("    - ht1: size %lu, level %lu, next %lu, linearsizemask %lu\n", d->ht[1].size, d->ht[1].level, d->ht[1].next, _linearSizemask(d->ht[1].level));
-        // idx = hash & d->ht[table].sizemask;
         idx = hash & _linearSizemask(d->ht[0].level);
         if (idx < d->ht[0].next) {
-            // printf("    - use new level\n");
+            /* linear hashing: entry could belong in bucket or split image */
             idx = hash & _linearSizemask(d->ht[0].level + 1);
         }
-        // printf("    - to table %lu bucket %lu\n", table, idx);
         /* Search if this slot does not already contain the given key */
         he = d->ht[table].table[idx];
         while(he) {
@@ -1127,10 +1123,9 @@ dictEntry **dictFindEntryRefByPtrAndHash(dict *d, const void *oldptr, uint64_t h
 
     if (dictSize(d) == 0) return NULL; /* dict is empty */
     for (table = 0; table <= 1; table++) {
-        // idx = hash & d->ht[table].sizemask;
         idx = hash & _linearSizemask(d->ht[0].level);
         if (idx < d->ht[0].next) {
-            // printf("    - use new level\n");
+            /* linear hashing: entry could be in bucket or split image */
             idx = hash & _linearSizemask(d->ht[0].level + 1);
         }
         heref = &d->ht[table].table[idx];
@@ -1277,7 +1272,7 @@ int main(int argc, char **argv) {
     if (argc == 2) {
         count = strtol(argv[1],NULL,10);
     } else {
-        count = 50000;
+        count = 50000; /* linear hashing: conduct smaller tests */
     }
 
     start_benchmark();
