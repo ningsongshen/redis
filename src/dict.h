@@ -55,7 +55,6 @@ typedef struct dictEntry {
         int64_t s64;
         double d;
     } v;
-    // unsigned long localsizemask;
     struct dictEntry *next;
 } dictEntry;
 
